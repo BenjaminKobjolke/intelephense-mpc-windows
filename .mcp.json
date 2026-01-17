@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "intelephense": {
+      "type": "stdio",
+      "command": "uv",
+      "args": ["--directory", "${CLAUDE_PLUGIN_ROOT}", "run", "python", "-m", "intelephense_watcher.mcp_server"]
+    }
+  }
+}
