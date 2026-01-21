@@ -1,6 +1,8 @@
 """Diagnostics display for terminal output."""
 
+import csv
 import fnmatch
+import io
 import os
 import re
 from typing import Any
@@ -323,3 +325,48 @@ class DiagnosticsDisplay:
             lines.append("Summary: " + ", ".join(summary_parts))
 
         return "\n".join(lines)
+
+    def format_csv(self, diagnostics: dict[str, list[dict[str, Any]]]) -> str:
+        """Format diagnostics as CSV string.
+
+        Columns: file,line,column,severity,message
+
+        Args:
+            diagnostics: Dictionary mapping URIs to lists of diagnostic objects.
+
+        Returns:
+            CSV formatted string with headers.
+        """
+        # Apply filters
+        filtered_diagnostics = filter_diagnostics_by_severity(diagnostics, self.min_severity)
+        filtered_diagnostics = filter_by_ignore_patterns(
+            filtered_diagnostics, self.ignore_patterns, self.workspace_path
+        )
+        filtered_diagnostics = filter_unused_underscore_variables(
+            filtered_diagnostics, self.ignore_unused_underscore
+        )
+
+        output = io.StringIO()
+        writer = csv.writer(output)
+        writer.writerow(["file", "line", "column", "severity", "message"])
+
+        for uri, diags in sorted(filtered_diagnostics.items()):
+            file_path = uri_to_path(uri)
+            rel_path = os.path.relpath(file_path, self.workspace_path)
+            # Normalize path separators
+            rel_path = rel_path.replace("\\", "/")
+
+            for diag in sorted(
+                diags, key=lambda d: d.get("range", {}).get("start", {}).get("line", 0)
+            ):
+                severity = diag.get("severity", 1)
+                severity_name = self.SEVERITY_MAP.get(severity, ("Unknown", ""))[0].lower()
+
+                start = diag.get("range", {}).get("start", {})
+                line = start.get("line", 0) + 1  # LSP lines are 0-indexed
+                col = start.get("character", 0) + 1
+                message = diag.get("message", "Unknown error")
+
+                writer.writerow([rel_path, line, col, severity_name, message])
+
+        return output.getvalue()

@@ -132,7 +132,29 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Show 'unused variable' hints for underscore-prefixed variables (default: hidden)",
     )
+    parser.add_argument(
+        "--format",
+        choices=["text", "csv"],
+        default="text",
+        help="Output format when using --output (default: text, auto-detects csv from .csv extension)",
+    )
     return parser.parse_args()
+
+
+def _should_use_csv(args: argparse.Namespace) -> bool:
+    """Determine if CSV format should be used based on args and output filename.
+
+    Args:
+        args: Parsed command-line arguments.
+
+    Returns:
+        True if CSV format should be used.
+    """
+    if args.format == "csv":
+        return True
+    if args.output and args.output.lower().endswith(".csv"):
+        return True
+    return False
 
 
 def main() -> None:
@@ -333,12 +355,21 @@ def main() -> None:
                 uri: diags for uri, diags in lsp_client.diagnostics.items()
                 if normalize_uri(uri) == target_uri
             }
-            output = display.format_plain(filtered_diagnostics)
+            if _should_use_csv(args):
+                output = display.format_csv(filtered_diagnostics)
+                # CSV has header line, so check if there's more than just the header
+                has_output = output.count("\n") > 1 or (output.count("\n") == 1 and not output.endswith("\n"))
+            else:
+                output = display.format_plain(filtered_diagnostics)
+                has_output = bool(output.strip())
 
         if settings.output_file:
-            with open(settings.output_file, "w", encoding="utf-8") as f:
-                f.write(output)
-            print(f"Diagnostics written to: {settings.output_file}")
+            if has_output:
+                with open(settings.output_file, "w", encoding="utf-8") as f:
+                    f.write(output)
+                print(f"Diagnostics written to: {settings.output_file}")
+            else:
+                print("No diagnostics found, skipping file creation")
         else:
             if output.strip():
                 print(output)
@@ -372,11 +403,21 @@ def main() -> None:
         # Timeout mode: wait, then output once and exit
         time.sleep(settings.timeout)
         with lsp_client.diagnostics_lock:
-            output = display.format_plain(dict(lsp_client.diagnostics))
+            diagnostics_dict = dict(lsp_client.diagnostics)
+            if _should_use_csv(args):
+                output = display.format_csv(diagnostics_dict)
+                # CSV has header line, so check if there's more than just the header
+                has_output = output.count("\n") > 1 or (output.count("\n") == 1 and not output.endswith("\n"))
+            else:
+                output = display.format_plain(diagnostics_dict)
+                has_output = bool(output.strip())
         if settings.output_file:
-            with open(settings.output_file, "w", encoding="utf-8") as f:
-                f.write(output)
-            print(f"Diagnostics written to: {settings.output_file}")
+            if has_output:
+                with open(settings.output_file, "w", encoding="utf-8") as f:
+                    f.write(output)
+                print(f"Diagnostics written to: {settings.output_file}")
+            else:
+                print("No diagnostics found, skipping file creation")
         else:
             print(output)
         # Clean shutdown
