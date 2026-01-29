@@ -7,4 +7,4 @@ if "%~1"=="" (
 set FILE=%~1
 set FOLDER=%~2
 if "%FOLDER%"=="" set FOLDER=.
-uv run intelephense-watcher %FOLDER% --file %FILE%
+call uv run intelephense-watcher %FOLDER% --file %FILE%
