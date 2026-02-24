@@ -1,12 +1,13 @@
 """MCP Server for Intelephense PHP diagnostics."""
 
 import atexit
+import json
 import logging
 import os
 import sys
 import threading
 import time
-from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
@@ -514,6 +515,89 @@ def search_symbols(project_path: str, query: str) -> str:
         return f"Error: {e}"
 
 
+class DiagnosticsHTTPHandler(BaseHTTPRequestHandler):
+    """HTTP request handler for diagnostics endpoint."""
+
+    def log_message(self, format: str, *args: Any) -> None:
+        """Route HTTP server logs to our logger instead of stderr."""
+        logger.info(f"HTTP: {format % args}")
+
+    def do_POST(self) -> None:
+        """Handle POST requests."""
+        if self.path != "/diagnostics":
+            self._send_json(404, {"error": f"Not found: {self.path}"})
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+            params = json.loads(body) if body else {}
+        except (json.JSONDecodeError, ValueError) as e:
+            self._send_json(400, {"error": f"Invalid JSON: {e}"})
+            return
+
+        project_path = params.get("project_path", "")
+        file_path = params.get("file_path")
+        min_severity = params.get("min_severity", "warning")
+
+        if not project_path:
+            self._send_json(400, {"error": "project_path is required"})
+            return
+
+        logger.info(
+            f"HTTP diagnostics request: project={project_path!r}, "
+            f"file={file_path!r}, severity={min_severity!r}"
+        )
+
+        try:
+            output = get_diagnostics(
+                project_path=project_path,
+                file_path=file_path,
+                min_severity=min_severity,
+            )
+
+            has_errors = "[error]" in output.lower()
+            has_warnings = "[warning]" in output.lower()
+
+            self._send_json(200, {
+                "diagnostics": output,
+                "has_errors": has_errors,
+                "has_warnings": has_warnings,
+                "output": output,
+            })
+        except Exception as e:
+            logger.exception("HTTP diagnostics error")
+            self._send_json(500, {"error": str(e)})
+
+    def _send_json(self, status: int, data: dict) -> None:
+        """Send a JSON response."""
+        body = json.dumps(data).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+
+def _start_http_server() -> HTTPServer | None:
+    """Start the HTTP diagnostics server in a daemon thread.
+
+    Returns:
+        The HTTPServer instance, or None if it failed to start.
+    """
+    port = int(os.environ.get("INTELEPHENSE_HTTP_PORT", "19850"))
+
+    try:
+        server = HTTPServer(("127.0.0.1", port), DiagnosticsHTTPHandler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        logger.info(f"HTTP diagnostics server listening on http://127.0.0.1:{port}")
+        return server
+    except OSError as e:
+        logger.warning(f"Failed to start HTTP server on port {port}: {e}")
+        return None
+
+
 def main() -> None:
     """Run the MCP server."""
     logger.info("=" * 60)
@@ -522,7 +606,15 @@ def main() -> None:
     logger.info(f"Process ID: {os.getpid()}")
     logger.info("Waiting for Claude Code connection...")
     logger.info("=" * 60)
+
+    # Start HTTP diagnostics server in background
+    http_server = _start_http_server()
+
     mcp.run(transport="stdio")
+
+    # Cleanup HTTP server on exit
+    if http_server:
+        http_server.shutdown()
 
 
 if __name__ == "__main__":
