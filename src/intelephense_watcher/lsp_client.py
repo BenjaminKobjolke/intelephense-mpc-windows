@@ -32,6 +32,7 @@ class LspClient:
         self.diagnostics_lock = threading.Lock()
         self.on_diagnostics_updated: Optional[Callable[[], None]] = None
         self.server_capabilities: dict[str, Any] = {}
+        self._opened_uris: set[str] = set()
 
     def start(self) -> bool:
         """Start the Intelephense process."""
@@ -231,6 +232,7 @@ class LspClient:
                 }
             },
         )
+        self._opened_uris.add(uri)
 
     def change_document(self, file_path: str) -> None:
         """Notify server of document change."""
@@ -256,11 +258,24 @@ class LspClient:
         """Close a document in the LSP server."""
         uri = path_to_uri(file_path)
         self.send_notification("textDocument/didClose", {"textDocument": {"uri": uri}})
+        self._opened_uris.discard(uri)
 
         # Remove diagnostics for closed file
         with self.diagnostics_lock:
             if uri in self.diagnostics:
                 del self.diagnostics[uri]
+
+    def ensure_document_open(self, file_path: str) -> None:
+        """Ensure a document is open in the LSP server.
+
+        If the file has not been opened yet, calls open_document().
+        If it has already been opened, calls change_document() to refresh.
+        """
+        uri = path_to_uri(file_path)
+        if uri not in self._opened_uris:
+            self.open_document(file_path)
+        else:
+            self.change_document(file_path)
 
     def find_references(
         self, file_path: str, line: int, character: int, include_declaration: bool = True

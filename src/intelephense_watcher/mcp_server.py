@@ -12,8 +12,10 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from watchdog.observers import Observer
+
 from intelephense_watcher.config.constants import CONSTANTS
-from intelephense_watcher.file_handler import scan_php_files
+from intelephense_watcher.file_handler import PhpFileHandler, scan_php_files
 from intelephense_watcher.lsp_client import LspClient
 from intelephense_watcher.utils import normalize_uri, path_to_uri, uri_to_path
 
@@ -37,8 +39,9 @@ stderr_handler.setLevel(logging.WARNING)  # Only warnings and errors to stderr
 stderr_handler.setFormatter(logging.Formatter(LOG_FORMAT))
 logger.addHandler(stderr_handler)
 
-# Global registry of LSP clients by project path
+# Global registry of LSP clients and file observers by project path
 _lsp_clients: dict[str, LspClient] = {}
+_file_observers: dict[str, Observer] = {}
 _clients_lock = threading.Lock()
 
 
@@ -81,12 +84,28 @@ def get_lsp_client(project_path: str) -> LspClient:
 
             _lsp_clients[project_path] = client
 
+            # Start file watcher for new/modified/deleted PHP files
+            event_handler = PhpFileHandler(client, debounce_delay=CONSTANTS.DEBOUNCE_DELAY)
+            observer = Observer()
+            observer.schedule(event_handler, project_path, recursive=True)
+            observer.daemon = True
+            observer.start()
+            _file_observers[project_path] = observer
+            logger.info(f"File watcher started for: {project_path}")
+
         return _lsp_clients[project_path]
 
 
 def cleanup_all_clients() -> None:
-    """Stop all LSP clients on shutdown."""
+    """Stop all file observers and LSP clients on shutdown."""
     with _clients_lock:
+        for project_path, observer in _file_observers.items():
+            logger.info(f"Stopping file observer for: {project_path}")
+            observer.stop()
+        for observer in _file_observers.values():
+            observer.join(timeout=5)
+        _file_observers.clear()
+
         for project_path, client in _lsp_clients.items():
             logger.info(f"Stopping LSP client for: {project_path}")
             client.stop()
@@ -209,16 +228,16 @@ def get_diagnostics(
 
         # Refresh file(s) to get latest diagnostics
         if file_path:
-            # Refresh single file
+            # Refresh single file (opens it if not yet known to LSP)
             logger.info(f"Refreshing file: {file_path}")
-            client.change_document(file_path)
+            client.ensure_document_open(file_path)
             time.sleep(CONSTANTS.DIAGNOSTICS_DELAY)  # Wait for LSP to process
         else:
             # Refresh all PHP files in project
             logger.info("Refreshing all PHP files...")
             php_files = scan_php_files(project_path)
             for fp in php_files:
-                client.change_document(fp)
+                client.ensure_document_open(fp)
             time.sleep(CONSTANTS.DIAGNOSTICS_DELAY)
 
         with client.diagnostics_lock:
