@@ -13,6 +13,7 @@ This package includes an MCP (Model Context Protocol) server that allows Claude 
 | `get_hover` | Get symbol documentation/type | `project_path`, `file_path`, `line`, `column` |
 | `get_document_symbols` | List all symbols in file | `project_path`, `file_path` |
 | `search_symbols` | Search workspace symbols | `project_path`, `query` |
+| `reindex` | Force re-index all PHP files (new/deleted file detection) | `project_path` |
 
 ### Tool Details
 
@@ -49,6 +50,21 @@ This package includes an MCP (Model Context Protocol) server that allows Claude 
 #### search_symbols
 - `project_path` (required): Absolute path to the PHP project root
 - `query` (required): Search query (partial name match)
+
+#### reindex
+- `project_path` (required): Absolute path to the PHP project root
+
+Forces a full re-scan of the workspace. Detects new PHP files that were created and deleted files that were removed since the last indexing. Use after bulk file operations (e.g., creating multiple new classes, refactoring, or moving files).
+
+## New File Detection
+
+The MCP server automatically detects new PHP files in two ways:
+
+1. **Automatic (on every `get_diagnostics` call)**: Before returning diagnostics, the server scans for any PHP files not yet known to the LSP and indexes them. This eliminates false "Undefined method/class" errors when referencing symbols from newly created files.
+
+2. **Manual (via `reindex` tool)**: Forces a complete workspace re-scan, detecting both new and deleted files. Useful after bulk file operations.
+
+The server also sends `workspace/didChangeWatchedFiles` notifications to Intelephense, ensuring the workspace-wide symbol index stays up to date.
 
 ## Registration with Claude Code
 

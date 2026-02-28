@@ -65,6 +65,7 @@ Before using Search/Glob/Grep/Read to find implementations, references, or defin
 | `mcp__intelephense__search_symbols` | Search symbols across entire workspace by name |
 | `mcp__intelephense__get_document_symbols` | Get all symbols (classes, functions, variables) in a file |
 | `mcp__intelephense__get_diagnostics` | Get PHP diagnostics/errors for project or file |
+| `mcp__intelephense__reindex` | Force re-index all PHP files (after bulk file operations) |
 
 ### Tool Parameters
 
@@ -80,6 +81,7 @@ Before using Search/Glob/Grep/Read to find implementations, references, or defin
 - `search_symbols`: requires `query` (partial name match)
 - `get_document_symbols`: requires `file_path`
 - `get_diagnostics`: optional `file_path` (omit for all files), optional `min_severity`
+- `reindex`: requires only `project_path` (use after creating/deleting multiple files)
 
 ### Usage Examples
 
@@ -101,6 +103,9 @@ mcp__intelephense__get_document_symbols(project_path, file_path)
 
 # Check for PHP errors in project
 mcp__intelephense__get_diagnostics(project_path)
+
+# Force re-index after bulk file operations
+mcp__intelephense__reindex(project_path)
 ```
 
 ### When to Use LSP (ALWAYS for these tasks)
@@ -130,6 +135,11 @@ mcp__intelephense__get_diagnostics(project_path)
 | `get_document_symbols` | List all symbols in file | `project_path`, `file_path` |
 | `search_symbols` | Search workspace symbols | `project_path`, `query` |
 | `get_capabilities` | Get LSP server capabilities | `project_path` |
+| `reindex` | Force re-index all PHP files (new/deleted detection) | `project_path` |
+
+## New File Detection
+
+The MCP server automatically detects newly created PHP files on every `get_diagnostics` call, so references to symbols in new files resolve correctly. For bulk operations (creating/deleting many files at once), use the `reindex` tool to force a complete workspace re-scan.
 
 ## Performance Notes
 

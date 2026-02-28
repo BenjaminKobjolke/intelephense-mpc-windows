@@ -190,3 +190,4 @@ start.bat . --no-ignore-unused-underscore
 
 - `DEBUG` - Set to `1` or `true` for debug mode
 - `LSP_TIMEOUT` - Request timeout in seconds (default: 30)
+- `INTELEPHENSE_HTTP_PORT` - HTTP diagnostics server port (default: 19850)
