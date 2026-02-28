@@ -8,6 +8,7 @@ from watchdog.events import FileSystemEvent, FileSystemEventHandler
 
 from intelephense_watcher.config.constants import CONSTANTS
 from intelephense_watcher.lsp_client import LspClient
+from intelephense_watcher.utils import path_to_uri
 
 
 def is_php_file(path: str) -> bool:
@@ -64,9 +65,14 @@ class PhpFileHandler(FileSystemEventHandler):
         """Handle file creation events."""
         if event.is_directory or not is_php_file(str(event.src_path)):
             return
-        self._debounced_action(
-            str(event.src_path), lambda: self.lsp_client.open_document(str(event.src_path))
-        )
+
+        def _handle_create() -> None:
+            path = str(event.src_path)
+            uri = path_to_uri(path)
+            self.lsp_client.notify_files_changed([{"uri": uri, "type": 1}])
+            self.lsp_client.open_document(path)
+
+        self._debounced_action(str(event.src_path), _handle_create)
 
     def on_modified(self, event: FileSystemEvent) -> None:
         """Handle file modification events."""
@@ -80,4 +86,7 @@ class PhpFileHandler(FileSystemEventHandler):
         """Handle file deletion events."""
         if event.is_directory or not is_php_file(str(event.src_path)):
             return
-        self.lsp_client.close_document(str(event.src_path))
+        path = str(event.src_path)
+        uri = path_to_uri(path)
+        self.lsp_client.notify_files_changed([{"uri": uri, "type": 3}])
+        self.lsp_client.close_document(path)

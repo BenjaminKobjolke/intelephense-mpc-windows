@@ -194,6 +194,41 @@ def _format_diagnostics(
     return "\n".join(lines)
 
 
+def _sync_new_files(client: LspClient, project_path: str) -> list[str]:
+    """Detect and index PHP files not yet known to the LSP client.
+
+    Scans the project for all PHP files, compares against the client's
+    opened URIs set, and opens+notifies for any new files.
+
+    Args:
+        client: The LSP client instance.
+        project_path: Absolute path to the project root.
+
+    Returns:
+        List of newly indexed file paths.
+    """
+    current_php_files = scan_php_files(project_path)
+    new_files = []
+
+    for fp in current_php_files:
+        uri = path_to_uri(fp)
+        if uri not in client._opened_uris:
+            new_files.append(fp)
+
+    if not new_files:
+        return []
+
+    # Send didChangeWatchedFiles for all new files in a batch (type 1 = Created)
+    changes = [{"uri": path_to_uri(fp), "type": 1} for fp in new_files]
+    client.notify_files_changed(changes)
+
+    # Open each new file in the LSP
+    for fp in new_files:
+        client.open_document(fp)
+
+    return new_files
+
+
 @mcp.tool()
 def get_diagnostics(
     project_path: str,
@@ -226,19 +261,28 @@ def get_diagnostics(
         client = get_lsp_client(project_path)
         severity_num = _severity_to_number(min_severity)
 
+        # Detect and index any new PHP files not yet known to the LSP
+        new_files = _sync_new_files(client, project_path)
+        if new_files:
+            logger.info(f"Found {len(new_files)} new PHP file(s) to index")
+
         # Refresh file(s) to get latest diagnostics
         if file_path:
             # Refresh single file (opens it if not yet known to LSP)
             logger.info(f"Refreshing file: {file_path}")
             client.ensure_document_open(file_path)
-            time.sleep(CONSTANTS.DIAGNOSTICS_DELAY)  # Wait for LSP to process
         else:
             # Refresh all PHP files in project
             logger.info("Refreshing all PHP files...")
             php_files = scan_php_files(project_path)
             for fp in php_files:
                 client.ensure_document_open(fp)
-            time.sleep(CONSTANTS.DIAGNOSTICS_DELAY)
+
+        # Wait for LSP to process; extra time if new files were indexed
+        delay = CONSTANTS.DIAGNOSTICS_DELAY
+        if new_files:
+            delay += CONSTANTS.NEW_FILE_EXTRA_DELAY
+        time.sleep(delay)
 
         with client.diagnostics_lock:
             # Log all diagnostics for debugging
@@ -531,6 +575,69 @@ def search_symbols(project_path: str, query: str) -> str:
 
     except Exception as e:
         logger.exception("Error searching symbols")
+        return f"Error: {e}"
+
+
+@mcp.tool()
+def reindex(project_path: str) -> str:
+    """Force re-index all PHP files in the workspace.
+
+    Scans for all PHP files, notifies the LSP about any new or removed files,
+    and refreshes all open documents. Use after bulk file operations.
+
+    Args:
+        project_path: Absolute path to the PHP project root.
+
+    Returns:
+        Summary of reindexing results.
+    """
+    logger.info(f"TOOL CALL: reindex(project_path={project_path!r})")
+    try:
+        client = get_lsp_client(project_path)
+
+        # Scan current PHP files
+        current_files = scan_php_files(project_path)
+        current_uris = {path_to_uri(fp) for fp in current_files}
+
+        # Find new files (on disk but not opened in LSP)
+        new_files = [fp for fp in current_files if path_to_uri(fp) not in client._opened_uris]
+
+        # Find removed files (opened in LSP but no longer on disk)
+        removed_uris = client._opened_uris - current_uris
+
+        # Build batch notification
+        changes: list[dict[str, Any]] = []
+        for fp in new_files:
+            changes.append({"uri": path_to_uri(fp), "type": 1})  # Created
+        for uri in removed_uris:
+            changes.append({"uri": uri, "type": 3})  # Deleted
+
+        if changes:
+            client.notify_files_changed(changes)
+
+        # Open new files
+        for fp in new_files:
+            client.open_document(fp)
+
+        # Close removed files
+        for uri in removed_uris:
+            file_path = uri_to_path(uri)
+            client.close_document(file_path)
+
+        # Refresh all existing open files
+        for fp in current_files:
+            if path_to_uri(fp) not in {path_to_uri(f) for f in new_files}:
+                client.change_document(fp)
+
+        time.sleep(CONSTANTS.DIAGNOSTICS_DELAY + CONSTANTS.NEW_FILE_EXTRA_DELAY)
+
+        return (
+            f"Reindex complete: {len(current_files)} total files, "
+            f"{len(new_files)} new, {len(removed_uris)} removed."
+        )
+
+    except Exception as e:
+        logger.exception("Error during reindex")
         return f"Error: {e}"
 
 

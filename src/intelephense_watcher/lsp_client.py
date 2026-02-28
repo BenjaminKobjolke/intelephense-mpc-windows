@@ -194,6 +194,9 @@ class LspClient:
                 },
                 "workspace": {
                     "workspaceFolders": True,
+                    "didChangeWatchedFiles": {
+                        "dynamicRegistration": False,
+                    },
                 },
             },
             "workspaceFolders": [
@@ -276,6 +279,18 @@ class LspClient:
             self.open_document(file_path)
         else:
             self.change_document(file_path)
+
+    def notify_files_changed(self, changes: list[dict[str, Any]]) -> None:
+        """Send workspace/didChangeWatchedFiles notification.
+
+        Notifies the LSP server about file system changes (created, changed, deleted).
+
+        Args:
+            changes: List of FileEvent dicts with 'uri' and 'type' keys.
+                     Type values: 1=Created, 2=Changed, 3=Deleted.
+        """
+        if changes:
+            self.send_notification("workspace/didChangeWatchedFiles", {"changes": changes})
 
     def find_references(
         self, file_path: str, line: int, character: int, include_declaration: bool = True

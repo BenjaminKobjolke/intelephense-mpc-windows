@@ -34,6 +34,7 @@ class Constants:
     REQUEST_TIMEOUT: float = 30.0
     INIT_DELAY: float = 1.0
     DIAGNOSTICS_DELAY: float = 2.0
+    NEW_FILE_EXTRA_DELAY: float = 1.0
 
     # Severity levels
     SEVERITY_ERROR: int = 1
